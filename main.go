@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,30 +34,35 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	_ = json.NewDecoder(r.Body).Decode(&user)
 
+	user.Username = strings.TrimSpace(user.Username)
+	user.Password = strings.TrimSpace(user.Password)
+
 	count, _ := collection.CountDocuments(context.TODO(), models.User{Username: user.Username})
 
 	if count != 0 {
-		helper.SendError(w, "user already exists", 400)
+		helper.SendError(w, fmt.Sprintf("user `%s` already exists", user.Username), 400)
 		return
 	}
 
-	result, err := collection.InsertOne(context.TODO(), user)
-	if err != nil {
+	if _, err := collection.InsertOne(context.TODO(), user); err != nil {
 		helper.GetError(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":      true,
+		"message": "user successfully created",
+	})
 }
 
 func getToken(w http.ResponseWriter, r *http.Request) {
 	username := mux.Vars(r)["username"]
 
-	var user models.User
-	_ = json.NewDecoder(r.Body).Decode(&user)
+	var passwordField models.User
+	_ = json.NewDecoder(r.Body).Decode(&passwordField)
 
-	if user.Password == "" {
+	if passwordField.Password == "" {
 		helper.SendError(w, "password not provided", 400)
 		return
 	}
@@ -66,18 +72,18 @@ func getToken(w http.ResponseWriter, r *http.Request) {
 	collection.FindOne(context.TODO(), models.User{Username: username}).Decode(&dbUser)
 
 	if dbUser.Username == "" {
-		helper.SendError(w, "user does not exist", http.StatusNotFound)
+		helper.SendError(w, fmt.Sprintf("user `%s` does not exist", username), http.StatusNotFound)
 		return
 	}
 
-	if user.Password != dbUser.Password {
+	if passwordField.Password != dbUser.Password {
 		helper.SendError(w, "wrong password", http.StatusForbidden)
 		return
 	}
 
 	claims := &jwt.StandardClaims{
-		ExpiresAt: 6 * time.Hour.Microseconds(),
-		Issuer:    user.Username,
+		ExpiresAt: time.Now().Local().Add(time.Hour).Unix(),
+		Issuer:    dbUser.Username,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -122,9 +128,17 @@ func authenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username := token.Claims.(jwt.MapClaims)["iss"]
+
+	if username == nil || username == "" {
+		helper.GetError(w, errors.New("no issuer found"))
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":      token.Valid,
-		"message": "authenticated",
+		"ok":       token.Valid,
+		"message":  "authenticated",
+		"username": username,
 	})
 }
 
@@ -140,7 +154,10 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = ":8080"
+	} else {
+		port = ":" + port
 	}
+
 	fmt.Printf("Running on port %s\n", port)
 	log.Fatal(http.ListenAndServe(port, r))
 }

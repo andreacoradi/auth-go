@@ -14,6 +14,7 @@ import (
 	"github.com/andreacoradi/auth/helper"
 	"github.com/andreacoradi/auth/models"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -158,6 +159,10 @@ func main() {
 		port = ":" + port
 	}
 
+	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"})
+	methods := handlers.AllowedMethods([]string{"GET", "POST", "HEAD", "OPTIONS"})
+	origins := handlers.AllowedOrigins([]string{"*"})
+
 	fmt.Printf("Running on port %s\n", port)
-	log.Fatal(http.ListenAndServe(port, r))
+	log.Fatal(http.ListenAndServe(port, handlers.CORS(headers, methods, origins)(r)))
 }

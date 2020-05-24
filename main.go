@@ -16,6 +16,8 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -41,7 +43,7 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 	count, _ := collection.CountDocuments(context.TODO(), models.User{Username: user.Username})
 
 	if count != 0 {
-		helper.SendError(w, fmt.Sprintf("user `%s` already exists", user.Username), 400)
+		helper.SendError(w, fmt.Sprintf("user `%s` already exists", user.Username), http.StatusBadRequest)
 		return
 	}
 
@@ -64,7 +66,7 @@ func getToken(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&passwordField)
 
 	if passwordField.Password == "" {
-		helper.SendError(w, "password not provided", 400)
+		helper.SendError(w, "password not provided", http.StatusBadRequest)
 		return
 	}
 
@@ -143,13 +145,79 @@ func authenticate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func changePassword(w http.ResponseWriter, r *http.Request) {
+	username := mux.Vars(r)["username"]
+
+	password := struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}{}
+
+	err := json.NewDecoder(r.Body).Decode(&password)
+	if err != nil {
+		helper.SendError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if password.NewPassword == password.OldPassword {
+		helper.SendError(w, "new password must be different", http.StatusForbidden)
+		return
+	}
+
+	var dbUser models.User
+
+	result := collection.FindOne(context.TODO(), models.User{Username: username})
+	if result.Err() != nil {
+		helper.SendError(w, fmt.Sprintf("no user '%s' found", username), http.StatusNotFound)
+		return
+	}
+
+	result.Decode(&dbUser)
+
+	if dbUser.Password != password.OldPassword {
+		helper.SendError(w, "wrong password", http.StatusForbidden)
+		return
+	}
+
+	update := bson.D{
+		primitive.E{
+			Key: "$set",
+			Value: models.User{
+				Password: password.NewPassword,
+			},
+		}}
+
+	result = collection.FindOneAndUpdate(context.TODO(), models.User{Username: username}, update)
+
+	if result.Err() != nil {
+		helper.SendError(w, result.Err().Error(), http.StatusBadRequest)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":      true,
+		"message": "password was successfully changed",
+	})
+}
+
+func handlerUser(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST":
+		getToken(w, r)
+	case "PUT":
+		changePassword(w, r)
+	default:
+		panic("method not allowed")
+	}
+}
+
 func main() {
 	r := mux.NewRouter().StrictSlash(true)
 	api := r.PathPrefix("/api/v1").Subrouter()
 
 	//API Endpoints
 	api.HandleFunc("/users", addUser).Methods("POST")
-	api.HandleFunc("/users/{username}", getToken).Methods("POST")
+	api.HandleFunc("/users/{username}", handlerUser).Methods("POST", "PUT")
 	api.HandleFunc("/auth", authenticate).Methods("GET")
 
 	port := os.Getenv("PORT")
@@ -160,7 +228,7 @@ func main() {
 	}
 
 	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"})
-	methods := handlers.AllowedMethods([]string{"GET", "POST", "HEAD", "OPTIONS"})
+	methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "HEAD", "OPTIONS"})
 	origins := handlers.AllowedOrigins([]string{"*"})
 
 	fmt.Printf("Running on port %s\n", port)

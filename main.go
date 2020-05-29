@@ -95,7 +95,7 @@ func getToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	claims := &jwt.StandardClaims{
-		ExpiresAt: time.Now().Local().Add(time.Hour).Unix(),
+		ExpiresAt: time.Now().Local().Add(24 * time.Hour).Unix(),
 		Issuer:    dbUser.Username,
 	}
 

@@ -19,6 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var collection *mongo.Collection
@@ -46,6 +47,15 @@ func addUser(w http.ResponseWriter, r *http.Request) {
 		helper.SendError(w, fmt.Sprintf("user `%s` already exists", user.Username), http.StatusBadRequest)
 		return
 	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+
+	if err != nil {
+		helper.GetError(w, err)
+		return
+	}
+
+	user.Password = string(hashedPassword)
 
 	if _, err := collection.InsertOne(context.TODO(), user); err != nil {
 		helper.GetError(w, err)
@@ -79,7 +89,7 @@ func getToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if passwordField.Password != dbUser.Password {
+	if err := bcrypt.CompareHashAndPassword([]byte(dbUser.Password), []byte(passwordField.Password)); err != nil {
 		helper.SendError(w, "wrong password", http.StatusForbidden)
 		return
 	}
@@ -174,8 +184,15 @@ func changePassword(w http.ResponseWriter, r *http.Request) {
 
 	result.Decode(&dbUser)
 
-	if dbUser.Password != password.OldPassword {
+	if err := bcrypt.CompareHashAndPassword([]byte(dbUser.Password), []byte(password.OldPassword)); err != nil {
 		helper.SendError(w, "wrong password", http.StatusForbidden)
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password.NewPassword), bcrypt.DefaultCost)
+
+	if err != nil {
+		helper.GetError(w, err)
 		return
 	}
 
@@ -183,7 +200,7 @@ func changePassword(w http.ResponseWriter, r *http.Request) {
 		primitive.E{
 			Key: "$set",
 			Value: models.User{
-				Password: password.NewPassword,
+				Password: string(hashedPassword),
 			},
 		}}
 

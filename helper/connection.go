@@ -48,7 +48,7 @@ type ErrorResponse struct {
 	ErrorMessage string `json:"message"`
 }
 
-//GetError sends an ErrorResponse the error message and with ok status
+//GetError sends an ErrorResponse the error message and with a StatusInternalServerError code
 func GetError(w http.ResponseWriter, err error) {
 	log.Println(err.Error())
 	var response = ErrorResponse{
@@ -62,7 +62,7 @@ func GetError(w http.ResponseWriter, err error) {
 	w.Write(message)
 }
 
-//SendError sends an ErrorResponse with a custom message and ok status
+//SendError sends an ErrorResponse with a custom message and status code
 func SendError(w http.ResponseWriter, message string, statusCode int) {
 	var response = ErrorResponse{
 		Ok:           false,
